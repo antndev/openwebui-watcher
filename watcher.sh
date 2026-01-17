@@ -12,6 +12,11 @@ if [ -f "${SCRIPT_DIR}/.env" ]; then
   set +a
 fi
 
+if [ -n "${TZ:-}" ] && [ -e "/usr/share/zoneinfo/${TZ}" ]; then
+  ln -snf "/usr/share/zoneinfo/${TZ}" /etc/localtime
+  echo "${TZ}" > /etc/timezone
+fi
+
 : "${BASE_URL:?BASE_URL not set}"
 : "${API_KEY:?API_KEY not set}"
 : "${KNOWLEDGE_ID:?KNOWLEDGE_ID not set}"
