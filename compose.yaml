@@ -1,0 +1,7 @@
+services:
+  watcher:
+    image: openwebui-watcher:latest
+    env_file:
+      - .env
+    volumes:
+      - ./inbox:/inbox:ro
