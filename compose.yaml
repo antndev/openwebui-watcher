@@ -1,6 +1,6 @@
 services:
   watcher:
-    image: openwebui-watcher:latest
+    image: ghcr.io/openwebui-watcher:latest
     env_file:
       - .env
     volumes:
