@@ -8,6 +8,7 @@ Behavior:
 - Recursive watch: all subfolders are included; folder structure is only used for deduplication and cleanup.
 - Ignore rules: dotfiles, `*.swp`, `*.tmp`, and `*~` are skipped.
 - Sync rules: on startup, missing local files are removed from the knowledge base; deletes/moves are mirrored.
+- Periodic sync: scans the inbox and knowledge base on a fixed interval to catch changes while the container was stopped.
 - Queueing: uploads are queued, parallelized, and retried with backoff; queue state is persisted on disk.
 - Status polling: waits for OpenWebUI processing to finish before adding to the knowledge base.
 
@@ -20,6 +21,7 @@ Env vars:
 | `WORKERS` | no | `4` | Parallel upload workers |
 | `MAX_RETRIES` | no | `5` | Upload retry attempts |
 | `STATUS_POLL_INTERVAL` | no | `2` | Seconds between status checks |
+| `SYNC_INTERVAL` | no | `300` | Seconds between full sync scans (set `0` to disable) |
 | `TZ` | no | `UTC` | Timezone (used for log timestamps) |
 
 Example:

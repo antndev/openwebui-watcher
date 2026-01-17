@@ -1,7 +1,15 @@
 services:
   watcher:
     image: ghcr.io/antndev/openwebui-watcher:latest
+    container_name: watcher
+    restart: unless-stopped
     env_file:
       - .env
     volumes:
-      - ./inbox:/inbox:ro
+      - /srv/openwebui-inbox:/inbox:ro
+    networks:
+      - proxy
+
+networks:
+  proxy:
+    external: true

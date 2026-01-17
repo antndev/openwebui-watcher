@@ -24,6 +24,7 @@ fi
 : "${WORKERS:=4}"
 : "${MAX_RETRIES:=5}"
 : "${STATUS_POLL_INTERVAL:=2}"
+: "${SYNC_INTERVAL:=300}"
 
 WATCH_DIR="/inbox"
 MAP_FILE="${SCRIPT_DIR}/knowledge-map.txt"
@@ -32,6 +33,11 @@ INFLIGHT_DIR="${SCRIPT_DIR}/inflight"
 
 log() {
   printf '[%s] %s\n' "$(date +'%Y-%m-%d %H:%M:%S')" "$*" >&2
+}
+
+is_ignored_name() {
+  local name="$1"
+  [[ "$name" = .* || "$name" == *.swp || "$name" == *.tmp || "$name" == *~ ]]
 }
 
 api_get() {
@@ -220,6 +226,15 @@ remove_file_from_knowledge() {
   local name="$1"
   local file_id="$2"
 
+  if [ -z "$file_id" ]; then
+    file_id="$(resolve_file_id_by_name "$name")"
+  fi
+
+  if [ -z "$file_id" ]; then
+    log "WARN: no FILE_ID found for $name, skipping remove"
+    return 0
+  fi
+
   log "cleanup in OpenWebUI for $name ($file_id)"
 
   local resp
@@ -230,6 +245,83 @@ remove_file_from_knowledge() {
   }
 
   log "file/remove response for $name: $resp"
+}
+
+resolve_file_id_by_name() {
+  local name="$1"
+  local resp
+  resp="$(api_get "/api/v1/knowledge/${KNOWLEDGE_ID}")" || {
+    log "ERROR: knowledge lookup failed for $name"
+    return 1
+  }
+  echo "$resp" | jq -r --arg name "$name" '
+    .files[]? | select(.meta.name == $name) | .id
+  ' | head -n1
+}
+
+periodic_sync() {
+  log "sync: start"
+
+  ensure_map_file
+
+  declare -A local_names
+  declare -A local_paths
+  declare -A knowledge_ids
+  declare -A knowledge_counts
+
+  while IFS= read -r -d '' path; do
+    local relpath name
+    relpath="${path#$WATCH_DIR/}"
+    name="$(basename "$path")"
+    if is_ignored_name "$name"; then
+      continue
+    fi
+    local_names["$name"]=$(( ${local_names["$name"]:-0} + 1 ))
+    local_paths["$relpath"]=1
+    if ! load_file_id "$relpath" >/dev/null; then
+      enqueue_file "$path"
+    fi
+  done < <(find "$WATCH_DIR" -type f -print0)
+
+  local resp
+  resp="$(api_get "/api/v1/knowledge/${KNOWLEDGE_ID}")" || {
+    log "ERROR: sync failed to list knowledge files"
+    return 1
+  }
+
+  while IFS='|' read -r name file_id; do
+    [ -z "$name" ] && continue
+    knowledge_counts["$name"]=$(( ${knowledge_counts["$name"]:-0} + 1 ))
+    knowledge_ids["$name"]="$file_id"
+  done < <(echo "$resp" | jq -r '.files[]? | "\(.meta.name)|\(.id)"')
+
+  while IFS='|' read -r relpath file_id; do
+    [ -z "$relpath" ] && continue
+    if [ -z "${local_paths["$relpath"]+x}" ]; then
+      remove_file_from_knowledge "$relpath" "$file_id" || log "WARN: remove failed for $relpath ($file_id)"
+      remove_mapping "$relpath"
+    fi
+  done < "$MAP_FILE"
+
+  for name in "${!knowledge_ids[@]}"; do
+    if [ "${local_names["$name"]:-0}" -eq 0 ] && [ "${knowledge_counts["$name"]:-0}" -eq 1 ]; then
+      remove_file_from_knowledge "$name" "${knowledge_ids["$name"]}" || log "WARN: remove failed for $name"
+    fi
+  done
+
+  log "sync: done"
+}
+
+periodic_sync_loop() {
+  if [ "$SYNC_INTERVAL" -le 0 ]; then
+    log "sync: disabled"
+    return 0
+  fi
+
+  while true; do
+    sleep "$SYNC_INTERVAL"
+    periodic_sync || true
+  done
 }
 
 upload_file() {
@@ -306,7 +398,7 @@ watch_loop() {
     name="$(basename "$fullpath")"
 
     # ignore tmp and swp files
-    if [[ "$name" = .* || "$name" == *.swp || "$name" == *.tmp || "$name" == *~ ]]; then
+    if is_ignored_name "$name"; then
       log "ignoring tmp file: $relpath (event: $events)"
       continue
     fi
@@ -323,11 +415,9 @@ watch_loop() {
       *DELETE*|*MOVED_FROM*)
         local file_id
         file_id="$(load_file_id "$relpath")"
+        remove_file_from_knowledge "$relpath" "$file_id" || log "WARN: remove failed for $relpath ($file_id)"
         if [ -n "$file_id" ]; then
-          remove_file_from_knowledge "$relpath" "$file_id" || log "WARN: remove failed for $relpath ($file_id)"
           remove_mapping "$relpath"
-        else
-          log "no FILE_ID found in map for $relpath, nothing to delete"
         fi
         remove_from_queue "$relpath"
         ;;
@@ -358,4 +448,5 @@ init_queue
 for _ in $(seq 1 "$WORKERS"); do
   worker_loop &
 done
+periodic_sync_loop &
 watch_loop
