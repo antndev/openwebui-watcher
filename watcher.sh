@@ -445,6 +445,7 @@ command -v jq >/dev/null 2>&1 || {
 
 startup_cleanup
 init_queue
+periodic_sync
 for _ in $(seq 1 "$WORKERS"); do
   worker_loop &
 done
