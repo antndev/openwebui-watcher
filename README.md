@@ -34,6 +34,7 @@ docker run --rm \
   -e WORKERS=4 \
   -e MAX_RETRIES=5 \
   -e STATUS_POLL_INTERVAL=2 \
+  -e SYNC_INTERVAL=300 \
   -v "/srv/inbox:/inbox:ro" \
   openwebui-watcher:latest
 ```

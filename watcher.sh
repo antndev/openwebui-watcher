@@ -269,6 +269,9 @@ periodic_sync() {
   declare -A knowledge_ids
   declare -A knowledge_counts
 
+  local enqueue_count=0
+  local remove_count=0
+
   while IFS= read -r -d '' path; do
     local relpath name
     relpath="${path#$WATCH_DIR/}"
@@ -280,6 +283,7 @@ periodic_sync() {
     local_paths["$relpath"]=1
     if ! load_file_id "$relpath" >/dev/null; then
       enqueue_file "$path"
+      enqueue_count=$((enqueue_count + 1))
     fi
   done < <(find "$WATCH_DIR" -type f -print0)
 
@@ -300,16 +304,18 @@ periodic_sync() {
     if [ -z "${local_paths["$relpath"]+x}" ]; then
       remove_file_from_knowledge "$relpath" "$file_id" || log "WARN: remove failed for $relpath ($file_id)"
       remove_mapping "$relpath"
+      remove_count=$((remove_count + 1))
     fi
   done < "$MAP_FILE"
 
   for name in "${!knowledge_ids[@]}"; do
     if [ "${local_names["$name"]:-0}" -eq 0 ] && [ "${knowledge_counts["$name"]:-0}" -eq 1 ]; then
       remove_file_from_knowledge "$name" "${knowledge_ids["$name"]}" || log "WARN: remove failed for $name"
+      remove_count=$((remove_count + 1))
     fi
   done
 
-  log "sync: done"
+  log "sync: done (enqueued $enqueue_count, removed $remove_count)"
 }
 
 periodic_sync_loop() {
