@@ -141,7 +141,7 @@ if __name__ == "__main__":
     base_url = env_required("BASE_URL")
     api_key = env_required("API_KEY")
     knowledge_id = env_required("KNOWLEDGE_ID")
-    watch_dir = os.getenv("WATCH_DIR", "/inbox")
+    watch_dir = "/inbox"
     interval = int(os.getenv("SYNC_INTERVAL", "10"))
 
     log("starting watcher")
