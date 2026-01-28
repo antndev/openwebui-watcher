@@ -12,6 +12,9 @@ def log(message: str) -> None:
 
 class Syncer:
     def __init__(self, base_url, api_key, knowledge_id, watch_dir="/inbox"):
+        # Ensure scheme for requests (e.g., http://openwebui:8080)
+        if "://" not in base_url:
+            base_url = f"http://{base_url}"
         self.base_url = base_url.rstrip("/")
         self.knowledge_id = knowledge_id
         self.watch_dir = watch_dir
