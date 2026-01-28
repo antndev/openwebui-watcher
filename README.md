@@ -1,14 +1,14 @@
 # OWUI-Watcher (Python)
 
-Minimal Python watcher that syncs files from `/inbox` to an OpenWebUI knowledge base.
+Minimal Python watcher that one-way mirrors files from `/inbox` to an OpenWebUI knowledge base.
 No web UI. Polling-based for reliability on Docker Desktop mounts.
 
 Behavior:
 - Recursive scan of `/inbox` (volume mount only; not configurable via env).
 - Ignores dotfiles, `*.swp`, `*.tmp`, `*~`.
-- Uploads missing files, waits for processing, then adds to knowledge base.
-- Removes knowledge entries when local files disappear.
-- Runs a full sync on a fixed interval.
+- One-way mirror: uploads files missing on the knowledge base.
+- Deletes knowledge entries when local files disappear.
+- Runs a full mirror pass on a fixed interval.
 
 Env vars:
 | Name | Required | Default | Notes |

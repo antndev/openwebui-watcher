@@ -22,18 +22,21 @@ class Syncer:
         self.session.headers.update({"Authorization": f"Bearer {api_key}"})
 
     # ----- local -----
-    def get_local_files(self) -> dict[str, str]:
+    def get_local_files(self) -> tuple[dict[str, str], int]:
         files = {}
+        ignored = 0
         for root, _, filenames in os.walk(self.watch_dir):
             for name in filenames:
                 if name.startswith(".") or name.endswith((".swp", ".tmp", "~")):
+                    ignored += 1
                     continue
                 full = os.path.join(root, name)
                 if os.path.getsize(full) == 0:
+                    ignored += 1
                     continue
                 rel = os.path.relpath(full, self.watch_dir)
                 files[rel] = full
-        return files
+        return files, ignored
 
     # ----- remote -----
     def get_remote_files(self) -> dict[str, str]:
@@ -71,19 +74,28 @@ class Syncer:
 
     def add_to_knowledge(self, file_id: str, name: str) -> bool:
         url = f"{self.base_url}/api/v1/knowledge/{self.knowledge_id}/file/add"
-        resp = self.session.post(
-            url,
-            json={"file_id": file_id, "metadatas": [], "metadata": {}},
-            timeout=30,
-        )
-        if resp.status_code == 400:
-            # Some OWUI versions expect file_ids instead of file_id.
-            resp = self.session.post(url, json={"file_ids": [file_id]}, timeout=30)
-            if resp.status_code == 400:
-                log(f"add failed for {name}: {resp.status_code} {resp.text}")
-                return False
-        resp.raise_for_status()
-        return True
+        payloads = [
+            {"file_id": file_id},
+            {"file_ids": [file_id]},
+            {"file_id": file_id, "metadata": {}},
+            {"file_ids": [file_id], "metadatas": [{}]},
+            {"file_id": file_id, "metadatas": [], "metadata": {}},
+        ]
+        last_error = None
+        for payload in payloads:
+            resp = self.session.post(url, json=payload, timeout=30)
+            if resp.status_code in (200, 201, 204):
+                return True
+            if resp.status_code in (400, 404, 422):
+                last_error = f"{resp.status_code} {resp.text}"
+                continue
+            try:
+                resp.raise_for_status()
+            except requests.HTTPError as exc:
+                last_error = str(exc)
+                continue
+        log(f"add failed for {name}: {last_error}")
+        return False
 
     def delete_remote(self, file_id: str) -> None:
         resp = self.session.post(
@@ -95,7 +107,7 @@ class Syncer:
 
     # ----- sync -----
     def sync_once(self) -> None:
-        local = self.get_local_files()
+        local, ignored = self.get_local_files()
         remote = self.get_remote_files()
 
         local_names = {os.path.basename(p) for p in local.keys()}
@@ -103,7 +115,12 @@ class Syncer:
         to_delete = [(name, file_id) for name, file_id in remote.items() if name not in local_names]
 
         if not to_upload and not to_delete:
-            log(f"sync: no changes (local {len(local_names)}, remote {len(remote)})")
+            if ignored:
+                log(
+                    f"sync: no changes (local {len(local_names)}, remote {len(remote)}, ignored {ignored})"
+                )
+            else:
+                log(f"sync: no changes (local {len(local_names)}, remote {len(remote)})")
             return
         add_failed = 0
         for name, full in to_upload:
@@ -114,10 +131,16 @@ class Syncer:
         for name, file_id in to_delete:
             self.delete_remote(file_id)
 
-        log(
-            f"sync: {len(to_upload)} upload(s), {add_failed} add_failed, {len(to_delete)} delete(s) "
-            f"(local {len(local_names)}, remote {len(remote)})"
-        )
+        if ignored:
+            log(
+                f"sync: {len(to_upload)} upload(s), {add_failed} add_failed, {len(to_delete)} delete(s) "
+                f"(local {len(local_names)}, remote {len(remote)}, ignored {ignored})"
+            )
+        else:
+            log(
+                f"sync: {len(to_upload)} upload(s), {add_failed} add_failed, {len(to_delete)} delete(s) "
+                f"(local {len(local_names)}, remote {len(remote)})"
+            )
 
     def run(self, interval_seconds: int = 5) -> None:
         log(f"start polling every {interval_seconds}s")
@@ -134,6 +157,10 @@ def env_required(name: str) -> str:
     value = os.getenv(name)
     if not value:
         raise SystemExit(f"{name} not set")
+    # Allow .env values wrapped in quotes
+    value = value.strip()
+    if (value.startswith('"') and value.endswith('"')) or (value.startswith("'") and value.endswith("'")):
+        value = value[1:-1]
     return value
 
 
