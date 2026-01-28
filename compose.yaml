@@ -1,6 +1,7 @@
 services:
   watcher:
-    image: ghcr.io/antndev/openwebui-watcher:latest
+    image: openwebui-watcher:local
+    build: .
     container_name: watcher
     restart: unless-stopped
     env_file:
@@ -8,7 +9,7 @@ services:
     volumes:
       - /srv/openwebui-inbox:/inbox:ro
     networks:
-      - proxy
+      - proxy # example network to reach openwebui
 
 networks:
   proxy:

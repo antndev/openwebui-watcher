@@ -1,16 +1,14 @@
-# OWUI-Watcher
+# OWUI-Watcher (Python)
 
-Watches `/inbox` inside the container and automatically syncs files to an OpenWebUI knowledge base.
-
-Best practice is to mount whatever host directory you want to watch into `/inbox`.
+Minimal Python watcher that syncs files from `/inbox` to an OpenWebUI knowledge base.
+No web UI. Polling-based for reliability on Docker Desktop mounts.
 
 Behavior:
-- Recursive watch: all subfolders are included; folder structure is only used for deduplication and cleanup.
-- Ignore rules: dotfiles, `*.swp`, `*.tmp`, and `*~` are skipped.
-- Sync rules: on startup, missing local files are removed from the knowledge base; deletes/moves are mirrored.
-- Periodic sync: scans the inbox and knowledge base on a fixed interval to catch changes while the container was stopped.
-- Queueing: uploads are queued, parallelized, and retried with backoff; queue state is persisted on disk.
-- Status polling: waits for OpenWebUI processing to finish before adding to the knowledge base.
+- Recursive scan of `/inbox`.
+- Ignores dotfiles, `*.swp`, `*.tmp`, `*~`.
+- Uploads missing files, waits for processing, then adds to knowledge base.
+- Removes knowledge entries when local files disappear.
+- Runs a full sync on a fixed interval.
 
 Env vars:
 | Name | Required | Default | Notes |
@@ -18,23 +16,21 @@ Env vars:
 | `BASE_URL` | yes | - | OpenWebUI base URL, e.g. `http://host:3000` |
 | `API_KEY` | yes | - | OpenWebUI API key |
 | `KNOWLEDGE_ID` | yes | - | Knowledge base ID |
-| `WORKERS` | no | `4` | Parallel upload workers |
-| `MAX_RETRIES` | no | `5` | Upload retry attempts |
-| `STATUS_POLL_INTERVAL` | no | `2` | Seconds between status checks |
-| `SYNC_INTERVAL` | no | `300` | Seconds between full sync scans (set `0` to disable) |
-| `TZ` | no | `UTC` | Timezone (used for log timestamps) |
+| `WATCH_DIR` | no | `/inbox` | Directory to watch |
+| `DATA_DIR` | no | `.` | Map storage directory |
+| `STATUS_POLL_INTERVAL` | no | `1` | Seconds between status checks |
+| `SYNC_INTERVAL` | no | `5` | Seconds between full sync scans |
+| `INTERVAL_SECONDS` | no | `5` | Alias for `SYNC_INTERVAL` |
+| `MAX_RETRIES` | no | `3` | Upload retry attempts |
 
 Example:
 ```bash
+docker build -t openwebui-watcher:local .
 docker run --rm \
   -e BASE_URL="http://your-openwebui:3000" \
   -e API_KEY="your-key" \
   -e KNOWLEDGE_ID="your-knowledge-id" \
-  -e TZ="Europe/Berlin" \
-  -e WORKERS=4 \
-  -e MAX_RETRIES=5 \
-  -e STATUS_POLL_INTERVAL=2 \
-  -e SYNC_INTERVAL=300 \
+  -e SYNC_INTERVAL=5 \
   -v "/srv/inbox:/inbox:ro" \
-  openwebui-watcher:latest
+  openwebui-watcher:local
 ```

@@ -1,0 +1,144 @@
+#!/usr/bin/env python3
+import os
+import time
+import requests
+from datetime import datetime
+
+
+def log(message: str) -> None:
+    ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    print(f"[{ts}] {message}", flush=True)
+
+
+class Syncer:
+    def __init__(self, base_url, api_key, knowledge_id, watch_dir="/inbox"):
+        self.base_url = base_url.rstrip("/")
+        self.knowledge_id = knowledge_id
+        self.watch_dir = watch_dir
+        self.session = requests.Session()
+        self.session.headers.update({"Authorization": f"Bearer {api_key}"})
+
+    # ----- local -----
+    def get_local_files(self) -> dict[str, str]:
+        log("scan local files")
+        files = {}
+        for root, _, filenames in os.walk(self.watch_dir):
+            for name in filenames:
+                if name.startswith(".") or name.endswith((".swp", ".tmp", "~")):
+                    continue
+                full = os.path.join(root, name)
+                if os.path.getsize(full) == 0:
+                    continue
+                rel = os.path.relpath(full, self.watch_dir)
+                files[rel] = full
+        return files
+
+    # ----- remote -----
+    def get_remote_files(self) -> dict[str, str]:
+        log("fetch remote files")
+        resp = self.session.get(
+            f"{self.base_url}/api/v1/knowledge/{self.knowledge_id}/files",
+            timeout=30,
+        )
+        resp.raise_for_status()
+        payload = resp.json()
+        if isinstance(payload, dict):
+            files = payload.get("items") or payload.get("files") or payload.get("data") or []
+        else:
+            files = payload
+        out = {}
+        for item in files:
+            meta = item.get("meta") or {}
+            name = meta.get("name") or item.get("filename")
+            file_id = item.get("id")
+            if name and file_id:
+                out[name] = file_id
+        log(f"remote files: {len(out)}")
+        return out
+
+    def upload_file(self, fullpath: str, display_name: str) -> str:
+        log(f"upload: {display_name}")
+        with open(fullpath, "rb") as handle:
+            resp = self.session.post(
+                f"{self.base_url}/api/v1/files/",
+                files={"file": (display_name, handle)},
+                timeout=120,
+            )
+        resp.raise_for_status()
+        file_id = resp.json().get("id")
+        if not file_id:
+            raise RuntimeError(f"no FILE_ID returned for {display_name}: {resp.text}")
+        log(f"uploaded: {display_name} -> {file_id}")
+        return file_id
+
+    def add_to_knowledge(self, file_id: str, name: str) -> None:
+        log(f"add to knowledge: {name} ({file_id})")
+        resp = self.session.post(
+            f"{self.base_url}/api/v1/knowledge/{self.knowledge_id}/file/add",
+            json={"file_id": file_id, "metadatas": [], "metadata": {}},
+            timeout=30,
+        )
+        if resp.status_code == 400:
+            log(f"add skipped for {name} (400): {resp.text}")
+            return
+        resp.raise_for_status()
+        log(f"added: {name} ({file_id})")
+
+    def delete_remote(self, file_id: str) -> None:
+        log(f"delete remote: {file_id}")
+        resp = self.session.post(
+            f"{self.base_url}/api/v1/knowledge/{self.knowledge_id}/file/remove",
+            json={"file_id": file_id},
+            timeout=30,
+        )
+        resp.raise_for_status()
+        log(f"deleted: {file_id}")
+
+    # ----- sync -----
+    def sync_once(self) -> None:
+        log("sync start")
+        local = self.get_local_files()
+        remote = self.get_remote_files()
+
+        # upload missing
+        for rel, full in local.items():
+            name = os.path.basename(rel)
+            if name in remote:
+                continue
+            file_id = self.upload_file(full, name)
+            self.add_to_knowledge(file_id, name)
+
+        # delete remote that no longer exists locally (one-way mirror)
+        local_names = {os.path.basename(p) for p in local.keys()}
+        for name, file_id in remote.items():
+            if name not in local_names:
+                self.delete_remote(file_id)
+        log("sync done")
+
+    def run(self, interval_seconds: int = 5) -> None:
+        log(f"start polling every {interval_seconds}s")
+        try:
+            self.sync_once()
+            while True:
+                time.sleep(interval_seconds)
+                self.sync_once()
+        except KeyboardInterrupt:
+            log("stopped")
+
+
+def env_required(name: str) -> str:
+    value = os.getenv(name)
+    if not value:
+        raise SystemExit(f"{name} not set")
+    return value
+
+
+if __name__ == "__main__":
+    base_url = env_required("BASE_URL")
+    api_key = env_required("API_KEY")
+    knowledge_id = env_required("KNOWLEDGE_ID")
+    watch_dir = os.getenv("WATCH_DIR", "/inbox")
+    interval = int(os.getenv("SYNC_INTERVAL", "10"))
+
+    log("starting watcher")
+    Syncer(base_url, api_key, knowledge_id, watch_dir).run(interval)

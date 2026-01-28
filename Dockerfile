@@ -1,7 +1,7 @@
-FROM alpine:3.20
-RUN apk add --no-cache bash ca-certificates curl jq inotify-tools tzdata
+FROM python:3.12-slim
 WORKDIR /app
 RUN mkdir -p /inbox
-COPY watcher.sh /app/watcher.sh
-RUN chmod +x /app/watcher.sh
-ENTRYPOINT ["/app/watcher.sh"]
+COPY requirements.txt /app/requirements.txt
+RUN pip install --no-cache-dir -r /app/requirements.txt
+COPY watcher.py /app/watcher.py
+ENTRYPOINT ["python", "/app/watcher.py"]
