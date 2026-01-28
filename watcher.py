@@ -23,7 +23,6 @@ class Syncer:
 
     # ----- local -----
     def get_local_files(self) -> dict[str, str]:
-        log("scan local files")
         files = {}
         for root, _, filenames in os.walk(self.watch_dir):
             for name in filenames:
@@ -38,7 +37,6 @@ class Syncer:
 
     # ----- remote -----
     def get_remote_files(self) -> dict[str, str]:
-        log("fetch remote files")
         resp = self.session.get(
             f"{self.base_url}/api/v1/knowledge/{self.knowledge_id}/files",
             timeout=30,
@@ -56,11 +54,9 @@ class Syncer:
             file_id = item.get("id")
             if name and file_id:
                 out[name] = file_id
-        log(f"remote files: {len(out)}")
         return out
 
     def upload_file(self, fullpath: str, display_name: str) -> str:
-        log(f"upload: {display_name}")
         with open(fullpath, "rb") as handle:
             resp = self.session.post(
                 f"{self.base_url}/api/v1/files/",
@@ -71,52 +67,49 @@ class Syncer:
         file_id = resp.json().get("id")
         if not file_id:
             raise RuntimeError(f"no FILE_ID returned for {display_name}: {resp.text}")
-        log(f"uploaded: {display_name} -> {file_id}")
         return file_id
 
     def add_to_knowledge(self, file_id: str, name: str) -> None:
-        log(f"add to knowledge: {name} ({file_id})")
         resp = self.session.post(
             f"{self.base_url}/api/v1/knowledge/{self.knowledge_id}/file/add",
             json={"file_id": file_id, "metadatas": [], "metadata": {}},
             timeout=30,
         )
         if resp.status_code == 400:
-            log(f"add skipped for {name} (400): {resp.text}")
             return
         resp.raise_for_status()
-        log(f"added: {name} ({file_id})")
 
     def delete_remote(self, file_id: str) -> None:
-        log(f"delete remote: {file_id}")
         resp = self.session.post(
             f"{self.base_url}/api/v1/knowledge/{self.knowledge_id}/file/remove",
             json={"file_id": file_id},
             timeout=30,
         )
         resp.raise_for_status()
-        log(f"deleted: {file_id}")
 
     # ----- sync -----
     def sync_once(self) -> None:
-        log("sync start")
         local = self.get_local_files()
         remote = self.get_remote_files()
 
-        # upload missing
-        for rel, full in local.items():
-            name = os.path.basename(rel)
-            if name in remote:
-                continue
+        local_names = {os.path.basename(p) for p in local.keys()}
+        to_upload = [(os.path.basename(rel), full) for rel, full in local.items() if os.path.basename(rel) not in remote]
+        to_delete = [(name, file_id) for name, file_id in remote.items() if name not in local_names]
+
+        if not to_upload and not to_delete:
+            log(f"sync: no changes (local {len(local_names)}, remote {len(remote)})")
+            return
+        for name, full in to_upload:
             file_id = self.upload_file(full, name)
             self.add_to_knowledge(file_id, name)
 
-        # delete remote that no longer exists locally (one-way mirror)
-        local_names = {os.path.basename(p) for p in local.keys()}
-        for name, file_id in remote.items():
-            if name not in local_names:
-                self.delete_remote(file_id)
-        log("sync done")
+        for name, file_id in to_delete:
+            self.delete_remote(file_id)
+
+        log(
+            f"sync: {len(to_upload)} upload(s), {len(to_delete)} delete(s) "
+            f"(local {len(local_names)}, remote {len(remote)})"
+        )
 
     def run(self, interval_seconds: int = 5) -> None:
         log(f"start polling every {interval_seconds}s")
