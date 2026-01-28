@@ -69,15 +69,21 @@ class Syncer:
             raise RuntimeError(f"no FILE_ID returned for {display_name}: {resp.text}")
         return file_id
 
-    def add_to_knowledge(self, file_id: str, name: str) -> None:
+    def add_to_knowledge(self, file_id: str, name: str) -> bool:
+        url = f"{self.base_url}/api/v1/knowledge/{self.knowledge_id}/file/add"
         resp = self.session.post(
-            f"{self.base_url}/api/v1/knowledge/{self.knowledge_id}/file/add",
+            url,
             json={"file_id": file_id, "metadatas": [], "metadata": {}},
             timeout=30,
         )
         if resp.status_code == 400:
-            return
+            # Some OWUI versions expect file_ids instead of file_id.
+            resp = self.session.post(url, json={"file_ids": [file_id]}, timeout=30)
+            if resp.status_code == 400:
+                log(f"add failed for {name}: {resp.status_code} {resp.text}")
+                return False
         resp.raise_for_status()
+        return True
 
     def delete_remote(self, file_id: str) -> None:
         resp = self.session.post(
@@ -99,15 +105,17 @@ class Syncer:
         if not to_upload and not to_delete:
             log(f"sync: no changes (local {len(local_names)}, remote {len(remote)})")
             return
+        add_failed = 0
         for name, full in to_upload:
             file_id = self.upload_file(full, name)
-            self.add_to_knowledge(file_id, name)
+            if not self.add_to_knowledge(file_id, name):
+                add_failed += 1
 
         for name, file_id in to_delete:
             self.delete_remote(file_id)
 
         log(
-            f"sync: {len(to_upload)} upload(s), {len(to_delete)} delete(s) "
+            f"sync: {len(to_upload)} upload(s), {add_failed} add_failed, {len(to_delete)} delete(s) "
             f"(local {len(local_names)}, remote {len(remote)})"
         )
 
