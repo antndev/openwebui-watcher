@@ -7,10 +7,4 @@ services:
     env_file:
       - .env
     volumes:
-      - /srv/openwebui-inbox:/inbox:ro
-    networks:
-      - proxy # example network to reach openwebui
-
-networks:
-  proxy:
-    external: true
+      - /srv/openwebui-inbox:/inbox
