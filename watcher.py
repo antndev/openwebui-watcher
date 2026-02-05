@@ -235,6 +235,28 @@ class Syncer:
         )
         return any(token in lowered for token in keywords)
 
+    def _is_permanent_add_error(self, status_code: int | None, message: str | None) -> bool:
+        if status_code in {400, 404, 409, 410, 413, 415, 422}:
+            return True
+        if not message:
+            return False
+        lowered = message.lower()
+        keywords = (
+            "duplicate content",
+            "content provided is empty",
+            "unsupported",
+            "invalid",
+            "format",
+            "mime",
+            "extension",
+            "parse",
+            "parser",
+            "decode",
+            "unstructured",
+            "file type",
+        )
+        return any(token in lowered for token in keywords)
+
     def _mark_blocked_file(self, rel: str, meta: dict, reason: str) -> None:
         if not self.state.enabled:
             return
@@ -442,21 +464,22 @@ class Syncer:
                 raise
         raise RuntimeError(f"upload failed for {display_name}")
 
-    def add_to_knowledge(self, file_id: str, name: str) -> tuple[bool, str | None]:
+    def add_to_knowledge(self, file_id: str, name: str) -> tuple[bool, int | None, str | None]:
         url = f"{self.base_url}/api/v1/knowledge/{self.knowledge_id}/file/add"
         payloads = [
             {"file_id": file_id},
             {"file_ids": [file_id]},
-            {"file_id": file_id, "metadata": {}},
-            {"file_ids": [file_id], "metadatas": [{}]},
-            {"file_id": file_id, "metadatas": [], "metadata": {}},
         ]
         last_error = None
+        last_status = None
         for payload in payloads:
             resp = self._request("POST", url, json=payload, timeout=self.request_timeout)
+            last_status = resp.status_code
             if resp.status_code in (200, 201, 204):
-                return True, None
-            if resp.status_code in (400, 404, 422):
+                return True, last_status, None
+            if resp.status_code >= 500:
+                resp.raise_for_status()
+            if resp.status_code in (400, 404, 409, 410, 413, 415, 422):
                 last_error = f"{resp.status_code} {self._response_error_detail(resp)}"
                 continue
             try:
@@ -465,7 +488,7 @@ class Syncer:
                 last_error = str(exc)
                 continue
         log(f"add failed for {name}: {last_error}")
-        return False, last_error
+        return False, last_status, last_error
 
     def delete_remote(self, file_id: str) -> None:
         resp = self._request(
@@ -666,7 +689,7 @@ class Syncer:
             if self.state.enabled:
                 self.state.set(rel, state)
             try:
-                added, add_error = self.add_to_knowledge(file_id, meta["name"])
+                added, add_status, add_error = self.add_to_knowledge(file_id, meta["name"])
             except requests.RequestException as exc:
                 log(f"sync: add failed for {meta['name']}: {exc}")
                 add_failed += 1
@@ -678,11 +701,11 @@ class Syncer:
                 continue
             if not added:
                 add_failed += 1
-                if self._looks_like_format_error(add_error):
+                if self._is_permanent_add_error(add_status, add_error):
                     if self.quarantine_file(
                         rel,
                         meta,
-                        f"knowledge add rejected: {add_error or 'unknown format error'}",
+                        f"knowledge add rejected: {add_error or 'unknown error'}",
                     ):
                         quarantined += 1
             else:
@@ -712,7 +735,7 @@ class Syncer:
                 log("sync: stop requested, aborting add loop")
                 break
             try:
-                added, add_error = self.add_to_knowledge(file_id, meta["name"])
+                added, add_status, add_error = self.add_to_knowledge(file_id, meta["name"])
             except requests.RequestException as exc:
                 log(f"sync: add failed for {meta['name']}: {exc}")
                 add_failed += 1
@@ -743,11 +766,11 @@ class Syncer:
                             self.state.set(rel, state)
             else:
                 add_failed += 1
-                if self._looks_like_format_error(add_error):
+                if self._is_permanent_add_error(add_status, add_error):
                     if self.quarantine_file(
                         rel,
                         meta,
-                        f"knowledge add rejected: {add_error or 'unknown format error'}",
+                        f"knowledge add rejected: {add_error or 'unknown error'}",
                     ):
                         quarantined += 1
             processed_adds += 1

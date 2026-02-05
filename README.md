@@ -8,8 +8,8 @@ Behavior:
 - Ignores dotfiles, `*.swp`, `*.tmp`, `*~`, and folders named `ignore`.
 - One-way mirror: uploads files missing on the knowledge base.
 - Deletes knowledge entries when local files disappear.
-- Files rejected by OpenWebUI (e.g. unsupported format) are moved into `WATCH_DIR/FAILED_DIR_NAME`
-  with a sidecar error JSON file and are ignored by sync.
+- Files rejected by OpenWebUI (including duplicate content or unsupported formats) are moved into
+  `WATCH_DIR/FAILED_DIR_NAME` with a sidecar error JSON file and are ignored by sync.
 - Runs a full mirror pass on a fixed interval.
 - Logs progress and ETA during uploads, adds, and deletions.
 - Progress logs include stable vs pending bytes so large inbound copies don’t look “missing”.
