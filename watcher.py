@@ -147,6 +147,15 @@ class Syncer:
             self._stop_requested = True
             log(f"stop requested: {reason}")
 
+    def _format_duration(self, seconds: float) -> str:
+        total = max(0, int(seconds))
+        hours = total // 3600
+        minutes = (total % 3600) // 60
+        secs = total % 60
+        if hours > 0:
+            return f"{hours:02d}:{minutes:02d}:{secs:02d}"
+        return f"{minutes:02d}:{secs:02d}"
+
     def _progress_eta(self, done: int, total: int, started_at: float) -> str:
         if total <= 0:
             return ""
@@ -154,7 +163,7 @@ class Syncer:
         rate = done / elapsed
         remaining = max(0, total - done)
         eta = int(remaining / rate) if rate > 0 else 0
-        return f"{done}/{total} ({rate:.2f}/s, ETA {eta}s)"
+        return f"{done}/{total} ({rate:.2f}/s, ETA {self._format_duration(eta)})"
 
     def _request(self, method: str, url: str, timeout: int, **kwargs) -> requests.Response:
         retry_statuses = {429, 500, 502, 503, 504}
@@ -495,6 +504,7 @@ class Syncer:
         quarantined_names = self.get_quarantined_names()
         local_names = set(name_counts.keys()) | quarantined_names
         stable = {}
+        total_local_bytes = sum(meta["size"] for meta in local.values())
         if self.state.enabled:
             for rel in list(self.state.data.get("files", {}).keys()):
                 if rel not in local:
@@ -528,6 +538,10 @@ class Syncer:
             }
             if self.state.enabled:
                 self.state.set(rel, state)
+
+        stable_bytes = sum(meta["size"] for meta in stable.values())
+        pending_count = max(0, len(local) - len(stable))
+        pending_bytes = max(0, total_local_bytes - stable_bytes)
 
         if not local_names and remote_entries:
             log("sync: local inbox empty; deleting all remote files")
@@ -586,8 +600,10 @@ class Syncer:
             return
         if to_upload or to_add or to_delete:
             log(
-                f"sync: start (local {len(local_names)}, remote {len(remote_entries)}, "
-                f"stable {len(stable)}, upload {len(to_upload)}, add {len(to_add)}, delete {len(to_delete)})"
+                f"sync: start (local {len(local_names)} files, {format_bytes(total_local_bytes)}; "
+                f"stable {len(stable)} files, {format_bytes(stable_bytes)}; "
+                f"pending {pending_count} files, {format_bytes(pending_bytes)}; "
+                f"remote {len(remote_entries)}, upload {len(to_upload)}, add {len(to_add)}, delete {len(to_delete)})"
             )
         if to_upload:
             log(f"sync: queued {len(to_upload)} upload(s), {format_bytes(total_bytes)} total")
@@ -621,7 +637,7 @@ class Syncer:
                 log(
                     f"uploading {meta['name']}: {format_bytes(read_bytes)}/{format_bytes(meta['size'])} "
                     f"({format_bytes(uploaded_bytes)}/{format_bytes(total_bytes)} total, "
-                    f"{format_bytes(int(rate))}/s, ETA {int(eta)}s)"
+                    f"{format_bytes(int(rate))}/s, ETA {self._format_duration(eta)})"
                 )
 
             try:

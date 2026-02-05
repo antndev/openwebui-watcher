@@ -12,6 +12,7 @@ Behavior:
   with a sidecar error JSON file and are ignored by sync.
 - Runs a full mirror pass on a fixed interval.
 - Logs progress and ETA during uploads, adds, and deletions.
+- Progress logs include stable vs pending bytes so large inbound copies don’t look “missing”.
 
 Env vars:
 | Name | Required | Default | Notes |
